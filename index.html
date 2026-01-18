@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Gerador Cruzadox v4.5 (Final)</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="controls">
+      <h3>Configuração</h3>
+
+      <div>
+        <label>Categoria ou Modo</label>
+        <select id="dbCategory" onchange="handleCategoryChange()">
+          <optgroup label="Modo Personalizado">
+            <option value="manual">✎ Colar Manualmente</option>
+          </optgroup>
+          <optgroup label="Banco de Dados">
+            <option value="mix" selected>★ Mix (2000+ palavras)</option>
+            <option value="alimentos">Alimentos (350+)</option>
+            <option value="animais">Animais (450+)</option>
+            <option value="geografia">Geografia (300+)</option>
+            <option value="natureza">Natureza (250+)</option>
+            <option value="cotidiano">Cotidiano (250+)</option>
+            <option value="cultura">Cultura (200+)</option>
+            <option value="nomes">Nomes (300+)</option>
+            <option value="adjetivos">Adjetivos (200+)</option>
+            <option value="geek">Geek & Games (600+)</option>
+            <option value="marcas">Marcas (200+)</option>
+            <option value="verbos">Verbos (200+)</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div id="section-auto" class="input-section active">
+        <div>
+          <label>Quantidade de Palavras</label>
+          <input type="number" id="dbCount" value="25" min="5" max="60" />
+          <small style="color: #888">Recomendado: 20 a 30</small>
+        </div>
+      </div>
+
+      <div id="section-manual" class="input-section">
+        <label>Cole sua lista (uma por linha)</label>
+        <textarea id="manualInput" placeholder="Mel&#10;Pão&#10;Kiwi...">
+Mel
+Pão
+Kiwi
+Tofu
+Arroz
+Carne
+Manga</textarea
+        >
+      </div>
+
+      <button onclick="runGenerator()">Gerar Jogo</button>
+      <div id="status" class="stats">Pronto.</div>
+    </div>
+
+    <div class="print-area">
+      <div id="printHeader" class="print-header">CRUZADOX</div>
+
+      <div class="game-container">
+        <table id="grid"></table>
+        <div id="wordList" class="word-list"></div>
+      </div>
+    </div>
+
+    <script src="script.js" defer></script>
+  </body>
+</html>
