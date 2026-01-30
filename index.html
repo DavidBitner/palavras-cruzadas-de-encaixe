@@ -2,9 +2,10 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <title>Gerador Cruzadox v4.5 (Final)</title>
+    <title>Gerador Cruzadox v5.0 (PDF Edition)</title>
     <link rel="stylesheet" href="style.css" />
     <link rel="icon" href="icon.jpg" type="image/jpeg" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   </head>
   <body>
     <div class="controls">
@@ -36,7 +37,7 @@
       <div id="section-auto" class="input-section active">
         <div>
           <label>Quantidade de Palavras</label>
-          <input type="number" id="dbCount" value="25" min="5" max="60" />
+          <input type="number" id="dbCount" value="50" min="5" max="60" />
           <small style="color: #888">Recomendado: 20 a 30</small>
         </div>
       </div>
@@ -46,21 +47,66 @@
         <textarea id="manualInput" placeholder="Mel&#10;Pão&#10;Kiwi...">
 Mel
 Pão
-Kiwi
-Tofu
-Arroz
-Carne
-Manga</textarea
+Kiwi</textarea
         >
       </div>
 
-      <button onclick="runGenerator()">Gerar Jogo</button>
+      <button onclick="runGenerator()" class="btn-primary">
+        🔄 Gerar Novo Jogo
+      </button>
+
+      <hr
+        style="
+          width: 100%;
+          border: 0;
+          border-top: 1px solid #eee;
+          margin: 15px 0;
+        "
+      />
+
+      <label>Opções de Impressão</label>
+      <button
+        onclick="downloadCurrentPDF()"
+        class="btn-secondary"
+        style="margin-bottom: 15px"
+      >
+        💾 Baixar Jogo Atual (1 pág)
+      </button>
+
+      <div class="batch-panel">
+        <label style="margin-bottom: 5px; display: block"
+          >Gerar Livro de Atividades</label
+        >
+        <div class="batch-controls">
+          <input
+            type="number"
+            id="batchQty"
+            value="50"
+            min="1"
+            max="200"
+            style="width: 70px; text-align: center"
+            title="Quantidade de jogos"
+          />
+          <button
+            onclick="generateBatchPDF()"
+            class="btn-secondary"
+            style="margin-top: 0; flex: 1"
+          >
+            📚 Baixar Livro
+          </button>
+        </div>
+        <small
+          style="color: #666; font-size: 0.8em; display: block; margin-top: 5px"
+        >
+          Gera um PDF com múltiplos jogos inéditos.
+        </small>
+      </div>
+
       <div id="status" class="stats">Pronto.</div>
     </div>
 
     <div class="print-area">
       <div id="printHeader" class="print-header">CRUZADOX</div>
-
       <div class="game-container">
         <table id="grid"></table>
         <div id="wordList" class="word-list"></div>

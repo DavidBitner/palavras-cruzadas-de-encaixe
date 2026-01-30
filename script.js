@@ -1,4 +1,11 @@
-// --- CONFIG ---
+/**
+ * CRUZADOX GENERATOR v5.0
+ * Logic & PDF Export
+ */
+
+/* ==========================================================================
+   CONFIGURATION & STATE
+   ========================================================================== */
 const AVAILABLE_THEMES = [
   "animais",
   "geografia",
@@ -13,12 +20,17 @@ const AVAILABLE_THEMES = [
   "verbos",
 ];
 
-// --- STATE ---
 let GLOBAL_GRID_SIZE = 25;
-let placedWordsData = [];
+let currentPlacedWords = [];
+let currentGrid = [];
 let activeWordsSet = new Set();
+let currentThemeName = "MISTO";
 
-// --- UI HANDLERS ---
+window.onload = handleCategoryChange;
+
+/* ==========================================================================
+   UI HANDLERS & DATA
+   ========================================================================== */
 function handleCategoryChange() {
   const category = document.getElementById("dbCategory").value;
   const isManual = category === "manual";
@@ -29,115 +41,117 @@ function handleCategoryChange() {
     .classList.toggle("active", isManual);
 }
 
-window.onload = handleCategoryChange;
-
-async function runGenerator() {
-  const btn = document.querySelector("button");
-  btn.disabled = true;
-  btn.innerText = "Carregando...";
-
-  const categoryInput = document.getElementById("dbCategory");
-  const category = categoryInput.value;
-  let finalWordList = [];
-
-  // Title Update Logic
-  try {
-    const titleElement = document.getElementById("printHeader");
-    if (titleElement) {
-      const selectedText =
-        categoryInput.options[categoryInput.selectedIndex].text;
-      let cleanTheme = selectedText
-        .replace(/[★✎]|\s*\(.*?\)/g, "")
-        .trim()
-        .toUpperCase();
-
-      titleElement.innerText =
-        category === "manual"
-          ? "CRUZADOX - DESAFIO"
-          : `CRUZADOX - ${cleanTheme}`;
-    }
-  } catch (e) {
-    console.warn("Title update failed", e);
+async function getWordPool(category) {
+  if (category === "manual") {
+    const rawText = document.getElementById("manualInput").value;
+    return rawText
+      .split("\n")
+      .map((w) => w.trim().toUpperCase())
+      .filter((w) => w.length > 0);
   }
 
-  // Data Fetching & Processing
+  let pool = [];
+  if (category === "mix") {
+    const promises = AVAILABLE_THEMES.map((theme) =>
+      fetch(`./data/${theme}.json`).then((res) => res.json()),
+    );
+    const results = await Promise.all(promises);
+    results.forEach((data) => (pool = pool.concat(data.palavras)));
+  } else {
+    const res = await fetch(`./data/${category}.json`);
+    if (!res.ok) throw new Error(`Fetch error: ${category}`);
+    const data = await res.json();
+    pool = data.palavras;
+  }
+  return [...new Set(pool)].map((w) => w.toUpperCase());
+}
+
+async function runGenerator() {
+  const btn = document.querySelector("button.btn-primary");
+  const statusDiv = document.getElementById("status");
+
+  btn.disabled = true;
+  statusDiv.innerText = "Processando...";
+
   try {
-    if (category === "manual") {
-      const rawText = document.getElementById("manualInput").value;
-      finalWordList = rawText
-        .split("\n")
-        .map((w) => w.trim().toUpperCase())
-        .filter((w) => w.length > 0);
-    } else {
-      const count = parseInt(document.getElementById("dbCount").value) || 20;
-      let pool = [];
+    // 1. Setup
+    const categoryInput = document.getElementById("dbCategory");
+    const category = categoryInput.value;
+    const count = parseInt(document.getElementById("dbCount").value) || 25;
 
-      if (category === "mix") {
-        const promises = AVAILABLE_THEMES.map((theme) =>
-          fetch(`./data/${theme}.json`).then((res) => res.json()),
-        );
-        const results = await Promise.all(promises);
-        results.forEach((data) => (pool = pool.concat(data.palavras)));
-      } else {
-        const response = await fetch(`./data/${category}.json`);
-        if (!response.ok) throw new Error(`Fetch error: ${category}`);
-        const data = await response.json();
-        pool = data.palavras;
-      }
+    // 2. Theme Name
+    const selectedText =
+      categoryInput.options[categoryInput.selectedIndex].text;
+    currentThemeName =
+      category === "manual"
+        ? "DESAFIO"
+        : selectedText
+            .replace(/[★✎]|\s*\(.*?\)/g, "")
+            .trim()
+            .toUpperCase();
 
-      pool = [...new Set(pool)].map((w) => w.toUpperCase());
+    document.getElementById("printHeader").innerText =
+      `CRUZADOX - ${currentThemeName}`;
 
-      finalWordList =
-        pool.length < count
-          ? pool
-          : pool.sort(() => 0.5 - Math.random()).slice(0, count);
+    // 3. Data & Generation
+    const fullPool = await getWordPool(category);
+    const selectedWords =
+      category !== "manual" && fullPool.length > count
+        ? fullPool.sort(() => 0.5 - Math.random()).slice(0, count)
+        : fullPool;
+
+    const result = generateBestLayout(selectedWords);
+
+    if (result.placedCount === 0) {
+      throw new Error("Não foi possível encaixar nenhuma palavra.");
     }
 
-    generateBestLayout(finalWordList);
+    // 4. Update State (Reveal Longest Word)
+    currentPlacedWords = result.placedWords;
+    currentGrid = result.grid;
+    activeWordsSet.clear();
+
+    if (currentPlacedWords.length > 0) {
+      const longest = currentPlacedWords.reduce((p, c) =>
+        p.word.length > c.word.length ? p : c,
+      );
+      activeWordsSet.add(longest.word);
+    }
+
+    // 5. Render
+    renderGridStructure(currentGrid);
+    renderInteractiveList(currentPlacedWords);
+    refreshGridVisibility();
+
+    statusDiv.innerText = `Sucesso! ${result.placedCount} palavras encaixadas.`;
   } catch (error) {
     console.error(error);
-    alert("Erro de processamento.");
+    statusDiv.innerText = "Erro ao processar.";
   } finally {
     btn.disabled = false;
-    btn.innerText = "Gerar Jogo";
   }
 }
 
-// --- GENERATOR CORE (Greedy Algorithm) ---
+/* ==========================================================================
+   ALGORITHM (GREEDY PLACEMENT)
+   ========================================================================== */
 function generateBestLayout(words) {
-  if (words.length === 0) {
-    alert("Lista vazia.");
-    return;
-  }
+  if (!words?.length) return { placedCount: 0, grid: [] };
 
   const maxLen = Math.max(...words.map((w) => w.length));
   GLOBAL_GRID_SIZE = Math.max(20, maxLen + 6);
 
   let bestResult = { placedCount: -1, grid: [] };
-  const iterations = 300;
+  const ATTEMPTS = 50;
 
-  for (let i = 0; i < iterations; i++) {
+  for (let i = 0; i < ATTEMPTS; i++) {
     let result = attemptGeneration([...words]);
     if (result.placedCount > bestResult.placedCount) {
       bestResult = result;
     }
     if (result.placedCount === words.length) break;
   }
-
-  if (bestResult.placedCount === 0) {
-    document.getElementById("status").innerText = "Erro: Falha no encaixe.";
-    return;
-  }
-
-  placedWordsData = bestResult.placedWords;
-  activeWordsSet.clear();
-
-  renderGridStructure(bestResult.grid);
-  renderInteractiveList(bestResult.placedWords);
-  refreshGridVisibility();
-
-  document.getElementById("status").innerText =
-    `Sucesso! ${bestResult.placedCount} de ${words.length} palavras encaixadas.`;
+  return bestResult;
 }
 
 function attemptGeneration(words) {
@@ -146,17 +160,17 @@ function attemptGeneration(words) {
     .map(() => Array(GLOBAL_GRID_SIZE).fill(null));
   let placedWords = [];
 
-  // Sort by length desc (anchor strategy)
+  // Anchor Strategy: Longest first, center placement
   words.sort((a, b) => b.length - a.length);
-
   const first = words[0];
   const startX = Math.floor((GLOBAL_GRID_SIZE - first.length) / 2);
   const startY = Math.floor(GLOBAL_GRID_SIZE / 2);
-  placeWord(grid, first, startX, startY, "H");
+
+  placeWordInGrid(grid, first, startX, startY, "H");
   placedWords.push({ word: first, x: startX, y: startY, dir: "H" });
 
-  let remaining = words.slice(1);
-  remaining.sort(() => Math.random() - 0.5);
+  // Place remaining
+  const remaining = words.slice(1).sort(() => Math.random() - 0.5);
 
   for (let word of remaining) {
     let placed = false;
@@ -164,31 +178,24 @@ function attemptGeneration(words) {
     // Scan grid for intersection points
     for (let y = 0; y < GLOBAL_GRID_SIZE; y++) {
       for (let x = 0; x < GLOBAL_GRID_SIZE; x++) {
-        if (grid[y][x] && word.includes(grid[y][x])) {
-          const letterIndex = word.indexOf(grid[y][x]);
+        const cell = grid[y][x];
+        if (!cell || !word.includes(cell)) continue;
 
-          if (canPlace(grid, word, x, y - letterIndex, "V")) {
-            placeWord(grid, word, x, y - letterIndex, "V");
-            placedWords.push({
-              word: word,
-              x: x,
-              y: y - letterIndex,
-              dir: "V",
-            });
-            placed = true;
-            break;
-          }
-          if (canPlace(grid, word, x - letterIndex, y, "H")) {
-            placeWord(grid, word, x - letterIndex, y, "H");
-            placedWords.push({
-              word: word,
-              x: x - letterIndex,
-              y: y,
-              dir: "H",
-            });
-            placed = true;
-            break;
-          }
+        const letterIndex = word.indexOf(cell);
+
+        // Try Vertical Intersection
+        if (canPlace(grid, word, x, y - letterIndex, "V")) {
+          placeWordInGrid(grid, word, x, y - letterIndex, "V");
+          placedWords.push({ word, x, y: y - letterIndex, dir: "V" });
+          placed = true;
+          break;
+        }
+        // Try Horizontal Intersection
+        if (canPlace(grid, word, x - letterIndex, y, "H")) {
+          placeWordInGrid(grid, word, x - letterIndex, y, "H");
+          placedWords.push({ word, x: x - letterIndex, y, dir: "H" });
+          placed = true;
+          break;
         }
       }
       if (placed) break;
@@ -198,105 +205,77 @@ function attemptGeneration(words) {
 }
 
 function canPlace(grid, word, startX, startY, dir) {
-  if (dir === "H") {
-    if (startX < 0 || startX + word.length > GLOBAL_GRID_SIZE) return false;
-    if (startY < 0 || startY >= GLOBAL_GRID_SIZE) return false;
+  const len = word.length;
+  const isH = dir === "H";
 
-    for (let i = 0; i < word.length; i++) {
-      let cell = grid[startY][startX + i];
-      if (cell !== null && cell !== word[i]) return false;
+  // Bounds Check
+  if (startX < 0 || startY < 0) return false;
+  if (isH && startX + len > GLOBAL_GRID_SIZE) return false;
+  if (!isH && startY + len > GLOBAL_GRID_SIZE) return false;
 
-      // Check adjacency for empty cells
-      if (cell === null) {
-        if (grid[startY][startX + i] !== null) return false;
-        if (startY > 0 && grid[startY - 1][startX + i] !== null) {
-          if (grid[startY - 1][startX + i] !== null) return false;
-        }
-        if (startY > 0 && grid[startY - 1][startX + i] !== null) return false;
-        if (
-          startY < GLOBAL_GRID_SIZE - 1 &&
-          grid[startY + 1][startX + i] !== null
-        )
+  // Collision & Adjacency Check
+  for (let i = 0; i < len; i++) {
+    const cx = isH ? startX + i : startX;
+    const cy = isH ? startY : startY + i;
+    const cell = grid[cy][cx];
+
+    if (cell !== null && cell !== word[i]) return false;
+
+    // If empty, check neighbors (no crowding)
+    if (cell === null) {
+      if (isH) {
+        if (cy > 0 && grid[cy - 1][cx] !== null) return false;
+        if (cy < GLOBAL_GRID_SIZE - 1 && grid[cy + 1][cx] !== null)
+          return false;
+      } else {
+        if (cx > 0 && grid[cy][cx - 1] !== null) return false;
+        if (cx < GLOBAL_GRID_SIZE - 1 && grid[cy][cx + 1] !== null)
           return false;
       }
     }
+  }
+
+  // Endcaps Check
+  if (isH) {
     if (startX > 0 && grid[startY][startX - 1] !== null) return false;
-    if (
-      startX + word.length < GLOBAL_GRID_SIZE &&
-      grid[startY][startX + word.length] !== null
-    )
+    if (startX + len < GLOBAL_GRID_SIZE && grid[startY][startX + len] !== null)
       return false;
   } else {
-    // Vertical Logic
-    if (startY < 0 || startY + word.length > GLOBAL_GRID_SIZE) return false;
-    if (startX < 0 || startX >= GLOBAL_GRID_SIZE) return false;
-    for (let i = 0; i < word.length; i++) {
-      let cell = grid[startY + i][startX];
-      if (cell !== null && cell !== word[i]) return false;
-      if (cell === null) {
-        if (startX > 0 && grid[startY + i][startX - 1] !== null) return false;
-        if (
-          startX < GLOBAL_GRID_SIZE - 1 &&
-          grid[startY + i][startX + 1] !== null
-        )
-          return false;
-      }
-    }
     if (startY > 0 && grid[startY - 1][startX] !== null) return false;
-    if (
-      startY + word.length < GLOBAL_GRID_SIZE &&
-      grid[startY + word.length][startX] !== null
-    )
+    if (startY + len < GLOBAL_GRID_SIZE && grid[startY + len][startX] !== null)
       return false;
   }
+
   return true;
 }
 
-function placeWord(grid, word, startX, startY, dir) {
+function placeWordInGrid(grid, word, x, y, dir) {
   for (let i = 0; i < word.length; i++) {
-    if (dir === "H") grid[startY][startX + i] = word[i];
-    else grid[startY + i][startX] = word[i];
+    if (dir === "H") grid[y][x + i] = word[i];
+    else grid[y + i][x] = word[i];
   }
 }
 
-// --- RENDERERS ---
-
+/* ==========================================================================
+   RENDERERS (DOM)
+   ========================================================================== */
 function renderGridStructure(grid) {
-  // Crop Grid Logic
-  let minX = GLOBAL_GRID_SIZE,
-    maxX = 0,
-    minY = GLOBAL_GRID_SIZE,
-    maxY = 0;
-  for (let y = 0; y < GLOBAL_GRID_SIZE; y++) {
-    for (let x = 0; x < GLOBAL_GRID_SIZE; x++) {
-      if (grid[y][x]) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-  minX = Math.max(0, minX - 1);
-  minY = Math.max(0, minY - 1);
-  maxX = Math.min(GLOBAL_GRID_SIZE - 1, maxX + 1);
-  maxY = Math.min(GLOBAL_GRID_SIZE - 1, maxY + 1);
-
+  const bounds = getGridBounds(grid);
   const table = document.getElementById("grid");
   table.innerHTML = "";
 
-  for (let y = minY; y <= maxY; y++) {
+  for (let y = bounds.minY; y <= bounds.maxY; y++) {
     const tr = document.createElement("tr");
-    for (let x = minX; x <= maxX; x++) {
+    for (let x = bounds.minX; x <= bounds.maxX; x++) {
       const td = document.createElement("td");
       const cell = grid[y][x];
 
-      if (cell === null) {
-        td.className = "empty";
-      } else {
+      if (cell) {
         td.className = "filled";
         td.innerText = cell;
         td.id = `cell-${x}-${y}`;
+      } else {
+        td.className = "empty";
       }
       tr.appendChild(td);
     }
@@ -318,62 +297,312 @@ function renderInteractiveList(placedWords) {
   Object.keys(groups)
     .sort((a, b) => a - b)
     .forEach((len) => {
-      const groupContainer = document.createElement("div");
-      groupContainer.className = "word-group";
+      const container = document.createElement("div");
+      container.className = "word-group";
 
-      const h4 = document.createElement("div");
-      h4.className = "group-title";
-      h4.innerText = `${len} Letras`;
-      groupContainer.appendChild(h4);
+      const title = document.createElement("div");
+      title.className = "group-title";
+      title.innerText = `${len} Letras`;
+      container.appendChild(title);
 
-      groups[len].sort().forEach((wordString) => {
+      groups[len].sort().forEach((wordStr) => {
         const item = document.createElement("div");
         item.className = "word-item";
-        item.innerText = wordString;
-
+        item.innerText = wordStr;
         item.onclick = function () {
-          toggleWordState(wordString, this);
+          toggleWordState(wordStr, this);
         };
-        groupContainer.appendChild(item);
+        container.appendChild(item);
       });
-      listDiv.appendChild(groupContainer);
+      listDiv.appendChild(container);
     });
 }
 
-function toggleWordState(wordString, domElement) {
-  if (activeWordsSet.has(wordString)) {
-    activeWordsSet.delete(wordString);
-    domElement.classList.remove("active");
+function toggleWordState(word, el) {
+  if (activeWordsSet.has(word)) {
+    activeWordsSet.delete(word);
   } else {
-    activeWordsSet.add(wordString);
-    domElement.classList.add("active");
+    activeWordsSet.add(word);
   }
   refreshGridVisibility();
 }
 
 function refreshGridVisibility() {
-  const allCells = document.querySelectorAll("#grid td.filled");
-  allCells.forEach((td) => td.classList.remove("revealed"));
+  document
+    .querySelectorAll("#grid td.filled")
+    .forEach((td) => td.classList.remove("revealed"));
+  document.querySelectorAll(".word-item").forEach((item) => {
+    item.classList.toggle("active", activeWordsSet.has(item.innerText));
+  });
 
-  activeWordsSet.forEach((activeWordStr) => {
-    const wordDataList = placedWordsData.filter(
-      (w) => w.word === activeWordStr,
-    );
+  activeWordsSet.forEach((word) => {
+    const data = currentPlacedWords.find((w) => w.word === word);
+    if (!data) return;
 
-    wordDataList.forEach((wData) => {
-      for (let i = 0; i < wData.word.length; i++) {
-        let tX, tY;
-        if (wData.dir === "H") {
-          tX = wData.x + i;
-          tY = wData.y;
-        } else {
-          tX = wData.x;
-          tY = wData.y + i;
+    for (let i = 0; i < word.length; i++) {
+      const tx = data.dir === "H" ? data.x + i : data.x;
+      const ty = data.dir === "H" ? data.y : data.y + i;
+      const cell = document.getElementById(`cell-${tx}-${ty}`);
+      if (cell) cell.classList.add("revealed");
+    }
+  });
+}
+
+function getGridBounds(grid) {
+  let minX = GLOBAL_GRID_SIZE,
+    maxX = 0,
+    minY = GLOBAL_GRID_SIZE,
+    maxY = 0;
+  for (let y = 0; y < GLOBAL_GRID_SIZE; y++) {
+    for (let x = 0; x < GLOBAL_GRID_SIZE; x++) {
+      if (grid[y][x]) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  return {
+    minX: Math.max(0, minX - 1),
+    minY: Math.max(0, minY - 1),
+    maxX: Math.min(GLOBAL_GRID_SIZE - 1, maxX + 1),
+    maxY: Math.min(GLOBAL_GRID_SIZE - 1, maxY + 1),
+  };
+}
+
+/* ==========================================================================
+   PDF GENERATION (JSPDF)
+   ========================================================================== */
+function downloadCurrentPDF() {
+  if (!currentPlacedWords.length) return alert("Gere um jogo primeiro!");
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: "landscape", format: "a4", unit: "mm" });
+  drawGameToPDF(
+    doc,
+    currentGrid,
+    currentPlacedWords,
+    currentThemeName,
+    1,
+    activeWordsSet,
+  );
+  doc.save(`cruzadox_${currentThemeName}_atual.pdf`);
+}
+
+async function generateBatchPDF() {
+  const btn = document.querySelector("button[onclick*='generateBatch']");
+  const qtyInput = document.getElementById("batchQty");
+  const qty = parseInt(qtyInput.value) || 50;
+  const originalText = btn.innerText;
+
+  if (qty < 1) return alert("Quantidade inválida.");
+
+  btn.disabled = true;
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({
+      orientation: "landscape",
+      format: "a4",
+      unit: "mm",
+    });
+
+    // Configs
+    const categoryInput = document.getElementById("dbCategory");
+    const category = categoryInput.value;
+    const count = parseInt(document.getElementById("dbCount").value) || 25;
+
+    let themeTitle =
+      category === "manual"
+        ? "DESAFIO"
+        : categoryInput.options[categoryInput.selectedIndex].text
+            .replace(/[★✎]|\s*\(.*?\)/g, "")
+            .trim()
+            .toUpperCase();
+
+    const fullPool = await getWordPool(category);
+
+    for (let i = 0; i < qty; i++) {
+      btn.innerText = `Gerando ${i + 1}/${qty}...`;
+
+      const selectedWords =
+        category !== "manual" && fullPool.length > count
+          ? fullPool.sort(() => 0.5 - Math.random()).slice(0, count)
+          : fullPool;
+
+      const result = generateBestLayout(selectedWords);
+
+      if (result.placedCount > 0) {
+        // Auto-reveal logic for PDF
+        let pdfActiveSet = new Set();
+        const longest = result.placedWords.reduce((p, c) =>
+          p.word.length > c.word.length ? p : c,
+        );
+        pdfActiveSet.add(longest.word);
+
+        if (i > 0) doc.addPage();
+        drawGameToPDF(
+          doc,
+          result.grid,
+          result.placedWords,
+          themeTitle,
+          i + 1,
+          pdfActiveSet,
+        );
+      }
+    }
+
+    doc.save(`cruzadox_livro_${qty}_jogos.pdf`);
+  } catch (e) {
+    console.error(e);
+    alert("Erro na geração em lote.");
+  } finally {
+    btn.innerText = originalText;
+    btn.disabled = false;
+  }
+}
+
+function drawGameToPDF(doc, grid, placedWords, title, pageNum, revealedSet) {
+  const pageWidth = 297;
+  const pageHeight = 210;
+
+  // Header
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(22);
+  doc.text(`CRUZADOX - ${title}`, pageWidth / 2, 15, { align: "center" });
+
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  doc.text(`Jogo #${pageNum}`, pageWidth - 15, 10, { align: "right" });
+
+  // Calc Grid Size
+  const bounds = getGridBounds(grid);
+  const rows = bounds.maxY - bounds.minY + 1;
+  const cols = bounds.maxX - bounds.minX + 1;
+
+  const maxGridW = 175;
+  const maxGridH = 170;
+  const startX = 10;
+  const startY = 25;
+
+  let cellSize = Math.min(maxGridW / cols, maxGridH / rows);
+  if (cellSize > 14) cellSize = 14;
+
+  const totalW = cols * cellSize;
+  const totalH = rows * cellSize;
+  const offX = startX + (maxGridW - totalW) / 2;
+  const offY = startY + (maxGridH - totalH) / 2;
+
+  // Draw Grid
+  doc.setLineWidth(0.4);
+  doc.setDrawColor(0);
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const cell = grid[bounds.minY + y][bounds.minX + x];
+      const posX = offX + x * cellSize;
+      const posY = offY + y * cellSize;
+
+      if (!cell) {
+        doc.setFillColor(0, 0, 0);
+        doc.rect(posX, posY, cellSize, cellSize, "F");
+      } else {
+        // Check if revealed
+        let isRevealed = false;
+        for (let rw of revealedSet) {
+          const pw = placedWords.find((p) => p.word === rw);
+          if (pw) {
+            const isH = pw.dir === "H";
+            const py = bounds.minY + y;
+            const px = bounds.minX + x;
+            if (isH && py === pw.y && px >= pw.x && px < pw.x + pw.word.length)
+              isRevealed = true;
+            if (!isH && px === pw.x && py >= pw.y && py < pw.y + pw.word.length)
+              isRevealed = true;
+          }
+          if (isRevealed) break;
         }
 
-        const cell = document.getElementById(`cell-${tX}-${tY}`);
-        if (cell) cell.classList.add("revealed");
+        if (isRevealed) {
+          doc.setFillColor(230, 230, 230);
+          doc.rect(posX, posY, cellSize, cellSize, "FD");
+          doc.setFontSize(cellSize * 2.2);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(0, 0, 0);
+          doc.text(cell, posX + cellSize / 2, posY + cellSize * 0.78, {
+            align: "center",
+          });
+        } else {
+          doc.setFillColor(255, 255, 255);
+          doc.rect(posX, posY, cellSize, cellSize, "FD");
+        }
       }
-    });
+    }
+  }
+
+  // Draw List
+  const listX = startX + maxGridW + 10;
+  let listY = startY;
+  const colWidth = 32;
+  const lineHeight = 5;
+
+  doc.setFontSize(14);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(0, 0, 0);
+  doc.text("Palavras:", listX, listY);
+  listY += 8;
+
+  const groups = {};
+  placedWords.forEach((w) => {
+    if (!groups[w.word.length]) groups[w.word.length] = [];
+    groups[w.word.length].push(w.word);
   });
+
+  doc.setFontSize(9);
+  let curCol = 0,
+    curLine = 0;
+  const maxLines = 32;
+
+  Object.keys(groups)
+    .sort((a, b) => a - b)
+    .forEach((len) => {
+      if (curLine > maxLines - 2) {
+        curCol++;
+        curLine = 0;
+      }
+
+      const gx = listX + curCol * colWidth;
+      const gy = listY + curLine * lineHeight;
+
+      doc.setFont("helvetica", "bold");
+      doc.text(`${len} LETRAS`, gx, gy);
+      doc.setLineWidth(0.2);
+      doc.line(gx, gy + 1, gx + 25, gy + 1);
+      curLine++;
+
+      doc.setFont("helvetica", "normal");
+      groups[len].sort().forEach((word) => {
+        if (curLine > maxLines) {
+          curCol++;
+          curLine = 0;
+        }
+
+        const wx = listX + curCol * colWidth;
+        const wy = listY + curLine * lineHeight;
+
+        if (revealedSet.has(word)) {
+          doc.setTextColor(80, 80, 80);
+          doc.text(word, wx, wy);
+          const wWidth = doc.getTextWidth(word);
+          doc.setLineWidth(0.3);
+          doc.line(wx, wy - 1.5, wx + wWidth, wy - 1.5);
+        } else {
+          doc.setTextColor(0, 0, 0);
+          doc.text(word, wx, wy);
+        }
+        curLine++;
+      });
+      curLine++;
+    });
 }
