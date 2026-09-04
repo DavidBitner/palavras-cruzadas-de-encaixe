@@ -26,7 +26,13 @@ let currentGrid = [];
 let activeWordsSet = new Set();
 let currentThemeName = "MISTO";
 
-window.onload = handleCategoryChange;
+// Populated once on load: theme name -> deduped, uppercased word list.
+let THEME_WORD_POOLS = {};
+
+window.onload = async () => {
+  handleCategoryChange();
+  await loadAllThemeData();
+};
 
 /* ==========================================================================
    UI HANDLERS & DATA
@@ -41,6 +47,34 @@ function handleCategoryChange() {
     .classList.toggle("active", isManual);
 }
 
+// Fetch every theme once, cache the results, and update each option's
+// displayed word count to match what's actually in the data (the counts
+// were previously hardcoded in the HTML and had drifted out of sync).
+async function loadAllThemeData() {
+  const promises = AVAILABLE_THEMES.map((theme) =>
+    fetch(`./data/${theme}.json`).then((res) => res.json()),
+  );
+  const results = await Promise.all(promises);
+
+  let allWords = [];
+  AVAILABLE_THEMES.forEach((theme, i) => {
+    const words = [...new Set(results[i].palavras.map((w) => w.toUpperCase()))];
+    THEME_WORD_POOLS[theme] = words;
+    allWords = allWords.concat(words);
+    updateOptionCount(theme, words.length);
+  });
+  updateOptionCount("mix", new Set(allWords).size);
+}
+
+function updateOptionCount(themeValue, count) {
+  const option = document.querySelector(`#dbCategory option[value="${themeValue}"]`);
+  if (!option) return;
+  option.textContent = option.textContent.replace(
+    /\(\d+\+?(\s*palavras)?\)/,
+    (_match, palavrasSuffix) => `(${count}+${palavrasSuffix || ""})`,
+  );
+}
+
 async function getWordPool(category) {
   if (category === "manual") {
     const rawText = document.getElementById("manualInput").value;
@@ -50,20 +84,24 @@ async function getWordPool(category) {
       .filter((w) => w.length > 0);
   }
 
-  let pool = [];
   if (category === "mix") {
-    const promises = AVAILABLE_THEMES.map((theme) =>
-      fetch(`./data/${theme}.json`).then((res) => res.json()),
-    );
-    const results = await Promise.all(promises);
-    results.forEach((data) => (pool = pool.concat(data.palavras)));
-  } else {
-    const res = await fetch(`./data/${category}.json`);
-    if (!res.ok) throw new Error(`Fetch error: ${category}`);
-    const data = await res.json();
-    pool = data.palavras;
+    const combined = AVAILABLE_THEMES.flatMap((theme) => THEME_WORD_POOLS[theme]);
+    return [...new Set(combined)];
   }
-  return [...new Set(pool)].map((w) => w.toUpperCase());
+
+  return THEME_WORD_POOLS[category] || [];
+}
+
+// Fisher-Yates shuffle. array.sort(() => Math.random() - 0.5) (the previous
+// approach, used in a couple of places) produces a biased, non-uniform
+// shuffle - sort() doesn't guarantee every pair gets compared.
+function shuffleArray(array) {
+  const result = [...array];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
 }
 
 async function runGenerator() {
@@ -97,7 +135,7 @@ async function runGenerator() {
     const fullPool = await getWordPool(category);
     const selectedWords =
       category !== "manual" && fullPool.length > count
-        ? fullPool.sort(() => 0.5 - Math.random()).slice(0, count)
+        ? shuffleArray(fullPool).slice(0, count)
         : fullPool;
 
     const result = generateBestLayout(selectedWords);
@@ -170,7 +208,7 @@ function attemptGeneration(words) {
   placedWords.push({ word: first, x: startX, y: startY, dir: "H" });
 
   // Place remaining
-  const remaining = words.slice(1).sort(() => Math.random() - 0.5);
+  const remaining = shuffleArray(words.slice(1));
 
   for (let word of remaining) {
     let placed = false;
@@ -390,6 +428,27 @@ function downloadCurrentPDF() {
   doc.save(`cruzadox_${currentThemeName}_atual.pdf`);
 }
 
+// Picks a random word subset that hasn't already been used in this batch
+// (tracked via usedSignatures), so a "livro" of puzzles doesn't quietly
+// repeat the same word set on multiple pages. Falls back to accepting a
+// repeat if the pool is too small/constrained to keep producing new ones.
+function pickUniqueWordSubset(fullPool, count, usedSignatures) {
+  if (fullPool.length <= count) {
+    return fullPool;
+  }
+
+  const MAX_ATTEMPTS = 20;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const candidate = shuffleArray(fullPool).slice(0, count);
+    const signature = [...candidate].sort().join("|");
+    if (!usedSignatures.has(signature)) {
+      usedSignatures.add(signature);
+      return candidate;
+    }
+  }
+  return shuffleArray(fullPool).slice(0, count);
+}
+
 async function generateBatchPDF() {
   const btn = document.querySelector("button[onclick*='generateBatch']");
   const qtyInput = document.getElementById("batchQty");
@@ -422,13 +481,14 @@ async function generateBatchPDF() {
             .toUpperCase();
 
     const fullPool = await getWordPool(category);
+    const usedSignatures = new Set();
 
     for (let i = 0; i < qty; i++) {
       btn.innerText = `Gerando ${i + 1}/${qty}...`;
 
       const selectedWords =
         category !== "manual" && fullPool.length > count
-          ? fullPool.sort(() => 0.5 - Math.random()).slice(0, count)
+          ? pickUniqueWordSubset(fullPool, count, usedSignatures)
           : fullPool;
 
       const result = generateBestLayout(selectedWords);
