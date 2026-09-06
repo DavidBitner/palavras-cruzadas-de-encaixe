@@ -166,6 +166,12 @@
     "VIVER",
     "VOLTAR",
     "VOAR",
-    "ZOMBAR"
+    "ZOMBAR",
+    "SENTAR",
+    "LEVANTAR",
+    "DEITAR",
+    "BRIGAR",
+    "ENSINAR",
+    "DESCANSAR"
   ]
 }

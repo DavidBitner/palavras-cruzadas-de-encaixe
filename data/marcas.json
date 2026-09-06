@@ -54,7 +54,7 @@
     "FUJI",
     "GAP",
     "GARMIN",
-    "GILLETE",
+    "GILLETTE",
     "GLOBO",
     "GOL",
     "GOOGLE",
@@ -132,7 +132,7 @@
     "PRADA",
     "PUMA",
     "RAYBAN",
-    "REDBOULL",
+    "REDBULL",
     "REEBOK",
     "RENAULT",
     "REXONA",
@@ -178,6 +178,15 @@
     "YAMAHA",
     "YOUTUBE",
     "ZARA",
-    "ZOOM"
+    "ZOOM",
+    "SHEIN",
+    "MERCADOLIVRE",
+    "MAGALU",
+    "IFOOD",
+    "NUBANK",
+    "PICPAY",
+    "AMBEV",
+    "RENNER",
+    "OBOTICARIO"
   ]
 }
