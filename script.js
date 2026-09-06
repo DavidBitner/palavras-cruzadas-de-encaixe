@@ -449,10 +449,32 @@ function pickUniqueWordSubset(fullPool, count, usedSignatures) {
   return shuffleArray(fullPool).slice(0, count);
 }
 
+// Builds the set of words to reveal (pre-filled) on a puzzle: the longest
+// word is always included, and the rest of the requested count is filled
+// with other randomly-chosen placed words. Gracefully caps at however many
+// words actually got placed if the requested count is higher than that.
+function pickRevealedWords(placedWords, count) {
+  const revealed = new Set();
+  const longest = placedWords.reduce((p, c) =>
+    p.word.length > c.word.length ? p : c,
+  );
+  revealed.add(longest.word);
+
+  const extraNeeded = Math.max(0, count - 1);
+  const others = shuffleArray(placedWords.filter((p) => p.word !== longest.word));
+  others.slice(0, extraNeeded).forEach((p) => revealed.add(p.word));
+
+  return revealed;
+}
+
 async function generateBatchPDF() {
   const btn = document.querySelector("button[onclick*='generateBatch']");
   const qtyInput = document.getElementById("batchQty");
   const qty = parseInt(qtyInput.value) || 50;
+  const revealedCount = Math.max(
+    1,
+    parseInt(document.getElementById("batchRevealed").value) || 1,
+  );
   const originalText = btn.innerText;
 
   if (qty < 1) return alert("Quantidade inválida.");
@@ -494,12 +516,7 @@ async function generateBatchPDF() {
       const result = generateBestLayout(selectedWords);
 
       if (result.placedCount > 0) {
-        // Auto-reveal logic for PDF
-        let pdfActiveSet = new Set();
-        const longest = result.placedWords.reduce((p, c) =>
-          p.word.length > c.word.length ? p : c,
-        );
-        pdfActiveSet.add(longest.word);
+        const pdfActiveSet = pickRevealedWords(result.placedWords, revealedCount);
 
         if (i > 0) doc.addPage();
         drawGameToPDF(
