@@ -47,9 +47,7 @@ function handleCategoryChange() {
     .classList.toggle("active", isManual);
 }
 
-// Fetch every theme once, cache the results, and update each option's
-// displayed word count to match what's actually in the data (the counts
-// were previously hardcoded in the HTML and had drifted out of sync).
+// Fetches every theme once and updates each option's word count display.
 async function loadAllThemeData() {
   const promises = AVAILABLE_THEMES.map((theme) =>
     fetch(`./data/${theme}.json`).then((res) => res.json()),
@@ -92,9 +90,7 @@ async function getWordPool(category) {
   return THEME_WORD_POOLS[category] || [];
 }
 
-// Fisher-Yates shuffle. array.sort(() => Math.random() - 0.5) (the previous
-// approach, used in a couple of places) produces a biased, non-uniform
-// shuffle - sort() doesn't guarantee every pair gets compared.
+// Fisher-Yates shuffle.
 function shuffleArray(array) {
   const result = [...array];
   for (let i = result.length - 1; i > 0; i--) {
@@ -177,7 +173,8 @@ function generateBestLayout(words) {
   if (!words?.length) return { placedCount: 0, grid: [] };
 
   const maxLen = Math.max(...words.map((w) => w.length));
-  GLOBAL_GRID_SIZE = Math.max(20, maxLen + 6);
+  // Scales with word count too, not just the longest word.
+  GLOBAL_GRID_SIZE = Math.max(20, maxLen + 6, Math.ceil(Math.sqrt(words.length) * 2.8));
 
   let bestResult = { placedCount: -1, grid: [] };
   const ATTEMPTS = 50;
@@ -428,10 +425,7 @@ function downloadCurrentPDF() {
   doc.save(`cruzadox_${currentThemeName}_atual.pdf`);
 }
 
-// Picks a random word subset that hasn't already been used in this batch
-// (tracked via usedSignatures), so a "livro" of puzzles doesn't quietly
-// repeat the same word set on multiple pages. Falls back to accepting a
-// repeat if the pool is too small/constrained to keep producing new ones.
+// Picks a word subset not already used in this batch, tracked via usedSignatures.
 function pickUniqueWordSubset(fullPool, count, usedSignatures) {
   if (fullPool.length <= count) {
     return fullPool;
@@ -449,10 +443,7 @@ function pickUniqueWordSubset(fullPool, count, usedSignatures) {
   return shuffleArray(fullPool).slice(0, count);
 }
 
-// Builds the set of words to reveal (pre-filled) on a puzzle: the longest
-// word is always included, and the rest of the requested count is filled
-// with other randomly-chosen placed words. Gracefully caps at however many
-// words actually got placed if the requested count is higher than that.
+// Longest word always revealed; rest of count filled with random others.
 function pickRevealedWords(placedWords, count) {
   const revealed = new Set();
   const longest = placedWords.reduce((p, c) =>
@@ -618,17 +609,18 @@ function drawGameToPDF(doc, grid, placedWords, title, pageNum, revealedSet) {
     }
   }
 
-  // Draw List
+  // Draw List (table-style: balanced columns, groups kept intact)
   const listX = startX + maxGridW + 10;
-  let listY = startY;
-  const colWidth = 32;
-  const lineHeight = 5;
+  const listRightMargin = 10;
+  const availableListWidth = pageWidth - listX - listRightMargin;
+  const listTop = startY;
+  const listContentTop = listTop + 8;
+  const availableListHeight = pageHeight - listContentTop - 12;
 
   doc.setFontSize(14);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(0, 0, 0);
-  doc.text("Palavras:", listX, listY);
-  listY += 8;
+  doc.text("Palavras:", listX, listTop);
 
   const groups = {};
   placedWords.forEach((w) => {
@@ -637,49 +629,98 @@ function drawGameToPDF(doc, grid, placedWords, title, pageNum, revealedSet) {
   });
 
   doc.setFontSize(9);
-  let curCol = 0,
-    curLine = 0;
-  const maxLines = 32;
 
-  Object.keys(groups)
-    .sort((a, b) => a - b)
-    .forEach((len) => {
-      if (curLine > maxLines - 2) {
-        curCol++;
-        curLine = 0;
-      }
-
-      const gx = listX + curCol * colWidth;
-      const gy = listY + curLine * lineHeight;
-
-      doc.setFont("helvetica", "bold");
-      doc.text(`${len} LETRAS`, gx, gy);
-      doc.setLineWidth(0.2);
-      doc.line(gx, gy + 1, gx + 25, gy + 1);
-      curLine++;
-
-      doc.setFont("helvetica", "normal");
-      groups[len].sort().forEach((word) => {
-        if (curLine > maxLines) {
-          curCol++;
-          curLine = 0;
-        }
-
-        const wx = listX + curCol * colWidth;
-        const wy = listY + curLine * lineHeight;
-
-        if (revealedSet.has(word)) {
-          doc.setTextColor(80, 80, 80);
-          doc.text(word, wx, wy);
-          const wWidth = doc.getTextWidth(word);
-          doc.setLineWidth(0.3);
-          doc.line(wx, wy - 1.5, wx + wWidth, wy - 1.5);
-        } else {
-          doc.setTextColor(0, 0, 0);
-          doc.text(word, wx, wy);
-        }
-        curLine++;
-      });
-      curLine++;
+  // Column width adapts to the actual longest word in this puzzle.
+  doc.setFont("helvetica", "normal");
+  let longestWordWidth = 0;
+  Object.values(groups).forEach((words) => {
+    words.forEach((w) => {
+      longestWordWidth = Math.max(longestWordWidth, doc.getTextWidth(w));
     });
+  });
+  doc.setFont("helvetica", "bold");
+  let longestHeaderWidth = 0;
+  Object.keys(groups).forEach((len) => {
+    longestHeaderWidth = Math.max(
+      longestHeaderWidth,
+      doc.getTextWidth(`${len} LETRAS`),
+    );
+  });
+  const colPadding = 6;
+  const colWidth = Math.max(longestWordWidth, longestHeaderWidth) + colPadding;
+  const maxColumns = Math.max(1, Math.floor(availableListWidth / colWidth));
+
+  let lineHeight = 5;
+  const groupList = Object.keys(groups)
+    .map((len) => ({
+      len: Number(len),
+      words: groups[len].sort(),
+      lineCount: 1 + groups[len].length, // header + its words
+    }))
+    .sort((a, b) => b.lineCount - a.lineCount); // largest first, for balancing
+
+  // Shrinks line height as a fallback if nothing else fits.
+  let columns = [];
+  for (let numCols = 1; numCols <= maxColumns; numCols++) {
+    columns = Array.from({ length: numCols }, () => ({ total: 0, groups: [] }));
+    groupList.forEach((g) => {
+      const target = columns.reduce(
+        (best, c) => (c.total < best.total ? c : best),
+        columns[0],
+      );
+      target.total += g.lineCount;
+      target.groups.push(g);
+    });
+    const maxColLines = Math.max(...columns.map((c) => c.total));
+    if (maxColLines * lineHeight <= availableListHeight) break;
+    if (numCols === maxColumns) {
+      lineHeight = Math.max(4, availableListHeight / maxColLines);
+    }
+  }
+
+  columns.forEach((col, i) => {
+    const colX = listX + i * colWidth;
+
+    if (i > 0) {
+      doc.setLineWidth(0.15);
+      doc.setDrawColor(200, 200, 200);
+      doc.line(
+        colX - colPadding / 2,
+        listContentTop - 4,
+        colX - colPadding / 2,
+        listContentTop + col.total * lineHeight,
+      );
+    }
+
+    let curLine = 0;
+    col.groups
+      .sort((a, b) => a.len - b.len)
+      .forEach((g) => {
+        const gy = listContentTop + curLine * lineHeight;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.setTextColor(0, 0, 0);
+        doc.text(`${g.len} LETRAS`, colX, gy);
+        doc.setLineWidth(0.2);
+        doc.setDrawColor(0);
+        doc.line(colX, gy + 1, colX + colWidth - colPadding, gy + 1);
+        curLine++;
+
+        doc.setFont("helvetica", "normal");
+        g.words.forEach((word) => {
+          const wy = listContentTop + curLine * lineHeight;
+          if (revealedSet.has(word)) {
+            doc.setTextColor(80, 80, 80);
+            doc.text(word, colX, wy);
+            const wWidth = doc.getTextWidth(word);
+            doc.setLineWidth(0.3);
+            doc.line(colX, wy - 1.5, colX + wWidth, wy - 1.5);
+          } else {
+            doc.setTextColor(0, 0, 0);
+            doc.text(word, colX, wy);
+          }
+          curLine++;
+        });
+      });
+  });
 }
