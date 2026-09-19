@@ -20,6 +20,20 @@ const AVAILABLE_THEMES = [
   "verbos",
 ];
 
+const PAGE_COLOR_PALETTE = [
+  [0, 90, 130], // azul petróleo
+  [30, 110, 70], // verde floresta
+  [140, 30, 55], // vinho
+  [190, 90, 20], // laranja queimado
+  [90, 40, 120], // roxo profundo
+  [170, 80, 50], // terracota
+  [30, 60, 110], // azul marinho
+  [95, 110, 30], // verde oliva
+  [150, 50, 40], // vermelho tijolo
+  [15, 110, 110], // turquesa escuro
+  [180, 130, 10], // mostarda
+];
+
 let GLOBAL_GRID_SIZE = 25;
 let currentPlacedWords = [];
 let currentGrid = [];
@@ -88,6 +102,13 @@ async function getWordPool(category) {
   }
 
   return THEME_WORD_POOLS[category] || [];
+}
+
+function pickPageColor(lastColor) {
+  const options = lastColor
+    ? PAGE_COLOR_PALETTE.filter((c) => c !== lastColor)
+    : PAGE_COLOR_PALETTE;
+  return options[Math.floor(Math.random() * options.length)];
 }
 
 // Fisher-Yates shuffle.
@@ -495,6 +516,8 @@ async function generateBatchPDF() {
 
     const fullPool = await getWordPool(category);
     const usedSignatures = new Set();
+    const colorize = document.getElementById("batchColorize").checked;
+    let lastPageColor = null;
 
     for (let i = 0; i < qty; i++) {
       btn.innerText = `Gerando ${i + 1}/${qty}...`;
@@ -509,6 +532,12 @@ async function generateBatchPDF() {
       if (result.placedCount > 0) {
         const pdfActiveSet = pickRevealedWords(result.placedWords, revealedCount);
 
+        let pageColor = null;
+        if (colorize) {
+          pageColor = pickPageColor(lastPageColor);
+          lastPageColor = pageColor;
+        }
+
         if (i > 0) doc.addPage();
         drawGameToPDF(
           doc,
@@ -517,6 +546,7 @@ async function generateBatchPDF() {
           themeTitle,
           i + 1,
           pdfActiveSet,
+          pageColor,
         );
       }
     }
@@ -531,14 +561,17 @@ async function generateBatchPDF() {
   }
 }
 
-function drawGameToPDF(doc, grid, placedWords, title, pageNum, revealedSet) {
+function drawGameToPDF(doc, grid, placedWords, title, pageNum, revealedSet, blockColor) {
   const pageWidth = 297;
   const pageHeight = 210;
+  const accentColor = blockColor || [0, 0, 0];
 
   // Header
   doc.setFont("helvetica", "bold");
   doc.setFontSize(22);
+  doc.setTextColor(...accentColor);
   doc.text(`CRUZADOX - ${title}`, pageWidth / 2, 15, { align: "center" });
+  doc.setTextColor(0, 0, 0);
 
   doc.setFontSize(10);
   doc.setFont("helvetica", "normal");
@@ -573,7 +606,7 @@ function drawGameToPDF(doc, grid, placedWords, title, pageNum, revealedSet) {
       const posY = offY + y * cellSize;
 
       if (!cell) {
-        doc.setFillColor(0, 0, 0);
+        doc.setFillColor(...accentColor);
         doc.rect(posX, posY, cellSize, cellSize, "F");
       } else {
         // Check if revealed
